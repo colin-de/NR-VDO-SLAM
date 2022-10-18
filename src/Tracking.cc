@@ -76,6 +76,7 @@ Tracking::Tracking(System *pSys, Map *pMap, const string &strSettingPath, const 
     }
     DistCoef.copyTo(mDistCoef);
 
+    // 双目摄像头baseline * fx 50
     mbf = fSettings["Camera.bf"];
 
     float fps = fSettings["Camera.fps"];
@@ -138,6 +139,7 @@ Tracking::Tracking(System *pSys, Map *pMap, const string &strSettingPath, const 
 
     if(sensor==System::RGBD)
     {
+        // 深度相机disparity转化为depth时的因子
         mDepthMapFactor = fSettings["DepthMapFactor"];
         cout << "- depth map factor: " << mDepthMapFactor << endl;
     }
@@ -243,7 +245,9 @@ cv::Mat Tracking::GrabImageRGBD(const cv::Mat &imRGB, cv::Mat &imD, const cv::Ma
         // cout << "mask updating time: " << mask_upd_time << endl;
     }
 
-    mCurrentFrame = Frame(mImGray,imDepth,imFlow,maskSEM,timestamp,mpORBextractorLeft,mK,mDistCoef,mbf,mThDepth,mThDepthObj,nUseSampleFea);
+    // 构造当前帧
+    mCurrentFrame = Frame(mImGray,imDepth,imFlow,maskSEM,timestamp,mpORBextractorLeft,mK,
+                          mDistCoef,mbf,mThDepth,mThDepthObj,nUseSampleFea);
 
     // ---------------------------------------------------------------------------------------
     // +++++++++++++++++++++++++ For sampled features ++++++++++++++++++++++++++++++++++++++++
@@ -253,7 +257,7 @@ cv::Mat Tracking::GrabImageRGBD(const cv::Mat &imRGB, cv::Mat &imD, const cv::Ma
     {
         cout << "Update Current Frame From Last....." << endl;
 
-        mCurrentFrame.mvStatKeys = mLastFrame.mvCorres;
+        mCurrentFrame.mvStatKeys = mLastFrame.mvCorres; // 获取上一帧的对应点
         mCurrentFrame.N_s = mCurrentFrame.mvStatKeys.size();
 
         // assign the depth value to each keypoint
@@ -276,7 +280,7 @@ cv::Mat Tracking::GrabImageRGBD(const cv::Mat &imRGB, cv::Mat &imD, const cv::Ma
         }
 
         // *********** Save object keypoints and depths ************
-
+        // // 先把当前帧关键点和深度赋给上一帧，再把上一帧根据光流找到的当前帧的对应点赋给当前帧
         // *** first assign current keypoints and depth to last frame
         // *** then assign last correspondences to current frame
         mvTmpObjKeys = mCurrentFrame.mvObjKeys;
@@ -320,11 +324,11 @@ cv::Mat Tracking::GrabImageRGBD(const cv::Mat &imRGB, cv::Mat &imD, const cv::Ma
     if (mState==NO_IMAGES_YET)
     {
         mCurrentFrame.mTcw_gt = Converter::toInvMatrix(mTcw_gt);
-        mOriginInv = mTcw_gt;
+        mOriginInv = mTcw_gt; // 第一帧作为参考坐标
     }
     else
     {
-        mCurrentFrame.mTcw_gt = Converter::toInvMatrix(mTcw_gt)*mOriginInv;
+        mCurrentFrame.mTcw_gt = Converter::toInvMatrix(mTcw_gt)*mOriginInv; // 相对于当前相机坐标系的位姿
     }
 
 
@@ -675,6 +679,8 @@ void Tracking::Track()
         cout << "--------------------------------------------" << endl;
 
         // // *********** Update TemperalMatch ***********
+        // 在进入Track()函数之前，已经定义了用来可视化的匹配点TemperalMatch
+        // TemperalMatch = vector<int>(mCurrentFrame.N_s,-1);N_s为特征点数量
         for (int i = 0; i < mCurrentFrame.N_s; ++i){
             TemperalMatch[i] = i;
         }
@@ -684,6 +690,7 @@ void Tracking::Track()
         double cam_pos_time;
         s_1_1 = clock();
         // Get initial estimate using P3P plus RanSac
+        // 相机初始位姿估计
         cv::Mat iniTcw = GetInitModelCam(TemperalMatch,TemperalMatch_subset);
         e_1_1 = clock();
 
@@ -693,7 +700,7 @@ void Tracking::Track()
         // cout << "initial pose: " << endl << iniTcw << endl;
         // // compute the pose with new matching
         mCurrentFrame.SetPose(iniTcw);
-        if (bJoint)
+        if (bJoint) //   对应论文 Joint Estimation with Optical Flow - > whether use joint optic-flow formulation
             Optimizer::PoseOptimizationFlow2Cam(&mCurrentFrame, &mLastFrame, TemperalMatch_subset);
         else
             Optimizer::PoseOptimizationNew(&mCurrentFrame, &mLastFrame, TemperalMatch_subset);
@@ -751,6 +758,7 @@ void Tracking::Track()
         cout << "--------------------------------------------" << endl;
 
         // // ====== compute sparse scene flow to the found matches =======
+        // 当前帧的场景流=当前帧的3D点-先前帧的3D点所构成的向量
         GetSceneFlowObj();
 
         // // ---------------------------------------------------------------------------------------
@@ -1222,6 +1230,7 @@ void Tracking::Initialization()
         std::vector<cv::Mat> mv3DPointTmp;
         for (int i = 0; i < mCurrentFrame.mvStatKeysTmp.size(); ++i)
         {
+            // mvStatKeysTmp/mvStatDepthTmp：在构造帧Frame时的   New added for background features  部分进行了获取，用稀疏点估计相机位姿
             mv3DPointTmp.push_back(Optimizer::Get3DinCamera(mCurrentFrame.mvStatKeysTmp[i], mCurrentFrame.mvStatDepthTmp[i], mK));
         }
         mCurrentFrame.mvStat3DPointTmp = mv3DPointTmp;
@@ -1229,6 +1238,7 @@ void Tracking::Initialization()
         std::vector<cv::Mat> mvObj3DPointTmp;
         for (int i = 0; i < mCurrentFrame.mvObjKeys.size(); ++i)
         {
+            // 同样，在构造帧Frame时的  New added for dense object features 部分进行了获取，用稠密点估计物体位姿
             mvObj3DPointTmp.push_back(Optimizer::Get3DinCamera(mCurrentFrame.mvObjKeys[i], mCurrentFrame.mvObjDepth[i], mK));
         }
         mCurrentFrame.mvObj3DPoint = mvObj3DPointTmp;
@@ -1363,6 +1373,9 @@ void Tracking::GetSceneFlowObj()
     // cv::waitKey(0);
 }
 
+// 动态目标跟踪
+//    ObjId：筛选后的Posi，ObjId[k]存储的是第k个标签对应的点在关键点中的Index,可以理解为obj label index
+//    sem_posi：筛选过后的UniLab,没有重复的标签
 std::vector<std::vector<int> > Tracking::DynObjTracking()
 {
     clock_t s_2, e_2;
@@ -1370,8 +1383,15 @@ std::vector<std::vector<int> > Tracking::DynObjTracking()
     s_2 = clock();
 
     // Find the unique labels in semantic label
+    // 作者给的mask中，不同物体的序号不一样
+    // 在GrabRGBImage（）中初始化和赋值
+    // 设置vSemObjLabel存储的是所有关键点的标签(从0开始递增，有N个物体就有[0,1,2,...N]的标签)
     auto UniLab = mCurrentFrame.vSemObjLabel;
     std::sort(UniLab.begin(), UniLab.end());
+
+    // std::unique-- 把已经排序过后的标签中相邻的重复元素到末尾，返回去重之后(!不包含重复元素）的尾地址
+    // iterator erase ( iterator first, iterator last ); 去除[first,last)的元素
+    // 这里就是把重复的标签去掉；label = k(k=0是为背景，k=正整数时表示图片中检测到的第N个物体)
     UniLab.erase(std::unique( UniLab.begin(), UniLab.end() ), UniLab.end() );
 
     cout << "Unique Semantic Label: ";
@@ -1397,7 +1417,9 @@ std::vector<std::vector<int> > Tracking::DynObjTracking()
         }
     }
 
-    // // Save objects only from Posi() -> ObjId()
+    // Save objects only from Posi() -> ObjId()
+    // 计算每一个标签对应的点在图像边界上的点数/该标签总点数，超过阈值便认为该物体位于图像边界上，
+    // 这时把属于该标签的所有点的标签都设置为-1,认为是外点，否则把没有位于图像边界上的物体上的点存储到ObjId里，对应的标签存到sem_posi里
     std::vector<std::vector<int> > ObjId;
     std::vector<int> sem_posi; // semantic label position for the objects
     int shrin_thr_row=0, shrin_thr_col=0;
@@ -1406,28 +1428,29 @@ std::vector<std::vector<int> > Tracking::DynObjTracking()
         shrin_thr_row = 25;
         shrin_thr_col = 50;
     }
-    for (int i = 0; i < Posi.size(); ++i)
+    for (int i = 0; i < Posi.size(); ++i) // 对每一个标签
     {
         // shrink the image to get rid of object parts on the boundary
         float count = 0, count_thres=0.5;
-        for (int j = 0; j < Posi[i].size(); ++j)
+        for (int j = 0; j < Posi[i].size(); ++j) // 标签Posi[i]对应了j个点
         {
             const float u = mCurrentFrame.mvObjKeys[Posi[i][j]].pt.x;
             const float v = mCurrentFrame.mvObjKeys[Posi[i][j]].pt.y;
+            // 在边界上的点
             if ( v<shrin_thr_row || v>(mImGray.rows-shrin_thr_row) || u<shrin_thr_col || u>(mImGray.cols-shrin_thr_col) )
                 count = count + 1;
         }
         if (count/Posi[i].size()>count_thres)
         {
             // cout << "Most part of this object is on the image boundary......" << endl;
-            for (int k = 0; k < Posi[i].size(); ++k)
+            for (int k = 0; k < Posi[i].size(); ++k) // 认为物体i上的点为外点
                 mCurrentFrame.vObjLabel[Posi[i][k]] = -1;
             continue;
         }
         else
         {
-            ObjId.push_back(Posi[i]);
-            sem_posi.push_back(UniLab[i]);
+            ObjId.push_back(Posi[i]); // 筛选过后的点
+            sem_posi.push_back(UniLab[i]); // 筛选过后的标签
         }
     }
 
@@ -1443,7 +1466,9 @@ std::vector<std::vector<int> > Tracking::DynObjTracking()
         {
             obj_center_depth = obj_center_depth + mCurrentFrame.mvObjDepth[ObjId[i][j]];
             // const float sf_norm = cv::norm(mCurrentFrame.vFlow_3d[ObjId[i][j]]);
+            // 求出该点处光流向量的长度（只用了x,z,可能y太小了没什么用？(见下图
             float sf_norm = std::sqrt(mCurrentFrame.vFlow_3d[ObjId[i][j]].x*mCurrentFrame.vFlow_3d[ObjId[i][j]].x + mCurrentFrame.vFlow_3d[ObjId[i][j]].z*mCurrentFrame.vFlow_3d[ObjId[i][j]].z);
+            // fSFMgThres---Scene Flow Magnitude and Distribution Threshold
             if (sf_norm<fSFMgThres)
                 sf_count = sf_count+1;
             if(sf_norm<sf_min)
@@ -1480,8 +1505,10 @@ std::vector<std::vector<int> > Tracking::DynObjTracking()
         //     cout << sf_range[j] << " ";
         // cout << endl;
 
-        if (sf_count/ObjId[i].size()>fSFDsThres)
+        // fSFDsThres---Scene Flow  Distribution Threshold
+        if (sf_count/ObjId[i].size()>fSFDsThres) //0.3/30%
         {
+            // 静态点占比>30%
             // label this object as static background
             for (int k = 0; k < ObjId[i].size(); ++k)
                 mCurrentFrame.vObjLabel[ObjId[i][k]] = 0;
@@ -1489,6 +1516,8 @@ std::vector<std::vector<int> > Tracking::DynObjTracking()
         }
         else if (obj_center_depth/ObjId[i].size()>mThDepthObj || ObjId[i].size()<150)
         {
+            // 如果obj上点的平均深度>阈值（Points seen as close by the stereo/RGBD sensor are considered reliable || 该物体上点数<150
+            //  太远了/太小了，不可靠（depth+取点个数共同判断)
             obj_dis_tres[i]=-1;
             // cout << "object " << sem_posi[i] <<" is too far away or too small! " << obj_center_depth/ObjId[i].size() << endl;
             // label this object as far away object
@@ -1499,24 +1528,26 @@ std::vector<std::vector<int> > Tracking::DynObjTracking()
         else
         {
             // cout << "get new objects!" << endl;
-            ObjIdNew.push_back(ObjId[i]);
-            SemPosNew.push_back(sem_posi[i]);
+            ObjIdNew.push_back(ObjId[i]); // 筛选后的ObjId，ObjIdNew[k]存储的是第k个标签对应的点在关键点中的Index。筛选机制把label=0去掉了
+            SemPosNew.push_back(sem_posi[i]); // 筛选过后的sem_posi,没有重复的标签
         }
     }
 
     // add ground truth tracks
     std::vector<int> nSemPosi_gt_tmp = mCurrentFrame.nSemPosi_gt;
-    for (int i = 0; i < sem_posi.size(); ++i)
+    for (int i = 0; i < sem_posi.size(); ++i) // 遍历所有的obj（包括太远或者太小的obj
     {
         for (int j = 0; j < nSemPosi_gt_tmp.size(); ++j)
         {
+            // 在当前帧所有的标签和
             if (sem_posi[i]==nSemPosi_gt_tmp[j] && obj_dis_tres[i]==-1)
             {
+                // obj_dis_tres[i]表示标签sem_posi[i]对应的物体太远或者太小
                 nSemPosi_gt_tmp[j]=-1;
             }
         }
     }
-
+    // 建图时不跟踪太远/太小的obj
     mpMap->vnSMLabelGT.push_back(nSemPosi_gt_tmp);
 
 
@@ -1535,7 +1566,7 @@ std::vector<std::vector<int> > Tracking::DynObjTracking()
 
     // Relabel the objects that associate with the objects in last frame
 
-    // initialize global object id
+    // initialize global object id 当前帧的id： f_id
     if (f_id==1)
         max_id = 1;
 

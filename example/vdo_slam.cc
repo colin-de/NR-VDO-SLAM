@@ -20,12 +20,35 @@
 
 using namespace std;
 
+/**
+ * @brief 加载图像
+ *
+ * @param[in] strPathToSequence    关联文件的访问路径
+ * @param[out] vstrFilenamesSEM    语义图像路径序列
+ * @param[out] vstrFilenamesRGB    彩色图像路径序列
+ * @param[out] vstrFilenamesDEP    深度图像路径序列
+ * @param[out] vstrFilenamesFLO    光流路径序列
+ * @param[out] vTimestamps         时间戳
+ * @param[out] vPoseGT             存储所有帧ground truth pose，在/pose_gt.txt里，为4*4矩阵
+ * @param[out] vObjPoseGT          存储object ground truth pose，在/object_pose.txt里
+ */
 void LoadData(const string &strPathToSequence, vector<string> &vstrFilenamesSEM,
               vector<string> &vstrFilenamesRGB, vector<string> &vstrFilenamesDEP, vector<string> &vstrFilenamesFLO,
               vector<double> &vTimestamps, vector<cv::Mat> &vPoseGT, vector<vector<float> > &vObjPoseGT);
 
+/**
+ * @param [in] strFilenamesMask
+ * @param [out] imMask
+*/
 void LoadMask(const string &strFilenamesMask, cv::Mat &imMask);
 
+/**
+ * @param imRGB       存储RGB图片
+ * @param imD         存储深度图
+ * @param imFlow      存储光流矩阵。光流的文件一般是以.flo格式文件保存的，有时候需要转换成.png等图片格式
+ * @param vObjPose_gt 物体在当前帧的标准位姿
+ * @param mTcw_gt     = vPoseGT[ni]：当帧图片的标准位姿
+*/
 int main(int argc, char **argv)
 {
     if(argc != 3)

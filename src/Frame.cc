@@ -59,7 +59,8 @@ Frame::Frame(const Frame &frame)
 
 
 Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const cv::Mat &imFlow, const cv::Mat &maskSEM,
-    const double &timeStamp, ORBextractor* extractor,cv::Mat &K, cv::Mat &distCoef, const float &bf, const float &thDepth, const float &thDepthObj, const int &UseSampleFea)
+    const double &timeStamp, ORBextractor* extractor,cv::Mat &K, cv::Mat &distCoef, const float &bf,
+    const float &thDepth, const float &thDepthObj, const int &UseSampleFea)
     :mpORBextractorLeft(extractor),mpORBextractorRight(static_cast<ORBextractor*>(NULL)),
      mTimeStamp(timeStamp), mK(K.clone()),mDistCoef(distCoef.clone()), mbf(bf), mThDepth(thDepth), mThDepthObj(thDepthObj)
 {
@@ -97,22 +98,25 @@ Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const cv::Mat &imFlo
     if(mvKeys.empty())
         return;
 
-    if (UseSampleFea==0)
+    // 这里对应论文4.2.1：使用稀疏背景特征点(除去检测的物体，被认为是静态的）来估计相机位姿
+    if (UseSampleFea==0) // 用RGBD时=1，其他=0
     {
         // // // Option I: ~~~~~~~ use detected features ~~~~~~~~~~ // // //
-
+        // 论文4.2.1 使用检测特征  used detected feature for background scene
         for (int i = 0; i < mvKeys.size(); ++i)
         {
             int x = mvKeys[i].pt.x;
             int y = mvKeys[i].pt.y;
 
+            // maskSEM：mask segmentation
             if (maskSEM.at<int>(y,x)!=0)  // new added in Jun 13 2019
-                continue;
+                continue; // 如果这个特征点位于检测到的objs上
 
+            // 深度值上限事先规定为45.0，在.yaml文件中
             if (imDepth.at<float>(y,x)>mThDepth || imDepth.at<float>(y,x)<=0)  // new added in Aug 21 2019
-                continue;
+                continue; // 如果特征点距离过远或者没有深度信息
 
-            float flow_xe = imFlow.at<cv::Vec2f>(y,x)[0];
+            float flow_xe = imFlow.at<cv::Vec2f>(y,x)[0]; // 光流向量
             float flow_ye = imFlow.at<cv::Vec2f>(y,x)[1];
 
 
@@ -120,7 +124,9 @@ Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const cv::Mat &imFlo
             {
                 if(mvKeys[i].pt.x+flow_xe < imGray.cols && mvKeys[i].pt.y+flow_ye < imGray.rows && mvKeys[i].pt.x < imGray.cols && mvKeys[i].pt.y < imGray.rows)
                 {
+                    // 存储用来进行相机位姿估计的静态点
                     mvStatKeysTmp.push_back(mvKeys[i]);
+                    // correspondence对应点  std::vector<cv::KeyPoint> mvCorres
                     mvCorres.push_back(cv::KeyPoint(mvKeys[i].pt.x+flow_xe,mvKeys[i].pt.y+flow_ye,0,0,0,mvKeys[i].octave,-1));
                     mvFlowNext.push_back(cv::Point2f(flow_xe,flow_ye));
                 }
@@ -130,10 +136,11 @@ Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const cv::Mat &imFlo
     else
     {
         // // // Option II: ~~~~~~~ use sampled features ~~~~~~~~~~ // // //
-
+        // 使用采样特征点
         clock_t s_1, e_1;
         double fea_det_time;
         s_1 = clock();
+        // 把图片划分为n_div*n_div(这里为20*20)个格子，从每个格子中随即选取一个点作为特征点
         std::vector<cv::KeyPoint> mvKeysSamp = SampleKeyPoints(imGray.rows, imGray.cols);
         e_1 = clock();
         fea_det_time = (double)(e_1-s_1)/CLOCKS_PER_SEC*1000;
@@ -198,6 +205,9 @@ Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const cv::Mat &imFlo
     // ---------------------------------------------------------------------------------------
 
     // semi-dense features on objects
+    // 物体上的稠密特征，用来跟踪动态物体
+    // 这部分内容在论文4.2.4，由于物体占图像面积小，能取到的稀疏特征点很少，不足以进行跟踪和估计位姿，
+    // 于是作者在物体mask内每隔3个点(也就是每4步)就取一个特征点的方式采样。只有内点才可以保存到地图并且用来对下一帧进行跟踪。
     int step = 4; // 3
     for (int i = 0; i < imGray.rows; i=i+step)
     {
@@ -205,6 +215,7 @@ Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const cv::Mat &imFlo
         {
 
             // check ground truth motion mask
+            // //是obj的区域 && 深度< 25.0 && 深度>0
             if (maskSEM.at<int>(i,j)!=0 && imDepth.at<float>(i,j)<mThDepthObj && imDepth.at<float>(i,j)>0)
             {
                 // get flow

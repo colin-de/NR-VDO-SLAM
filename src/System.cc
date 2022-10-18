@@ -47,7 +47,6 @@ System::System(const string &strSettingsFile, const eSensor sensor):mSensor(sens
 
 }
 
-
 cv::Mat System::TrackRGBD(const cv::Mat &im, cv::Mat &depthmap, const cv::Mat &flowmap, const cv::Mat &masksem,
                           const cv::Mat &mTcw_gt, const vector<vector<float> > &vObjPose_gt,
                           const double &timestamp, cv::Mat &imTraj, const int &nImage)
