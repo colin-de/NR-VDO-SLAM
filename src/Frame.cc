@@ -98,7 +98,7 @@ Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const cv::Mat &imFlo
     if(mvKeys.empty())
         return;
 
-    // 这里对应论文4.2.1：使用稀疏背景特征点(除去检测的物体，被认为是静态的）来估计相机位姿
+    // 使用稀疏背景特征点(除去检测的物体，被认为是静态的）来估计相机位姿
     if (UseSampleFea==0) // 用RGBD时=1，其他=0
     {
         // // // Option I: ~~~~~~~ use detected features ~~~~~~~~~~ // // //
@@ -206,7 +206,7 @@ Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const cv::Mat &imFlo
 
     // semi-dense features on objects
     // 物体上的稠密特征，用来跟踪动态物体
-    // 这部分内容在论文4.2.4，由于物体占图像面积小，能取到的稀疏特征点很少，不足以进行跟踪和估计位姿，
+    // 由于物体占图像面积小，能取到的稀疏特征点很少，不足以进行跟踪和估计位姿，
     // 于是作者在物体mask内每隔3个点(也就是每4步)就取一个特征点的方式采样。只有内点才可以保存到地图并且用来对下一帧进行跟踪。
     int step = 4; // 3
     for (int i = 0; i < imGray.rows; i=i+step)

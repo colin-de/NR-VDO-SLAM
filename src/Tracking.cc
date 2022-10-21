@@ -169,7 +169,7 @@ cv::Mat Tracking::GrabImageRGBD(const cv::Mat &imRGB, cv::Mat &imD, const cv::Ma
 {
     // initialize some paras
     StopFrame = nImage-1;
-    bJoint = true;
+    bJoint = true; //use joint optic-flow formulation
     cv::RNG rng((unsigned)time(NULL));
 
     // Initialize Global ID
@@ -260,7 +260,7 @@ cv::Mat Tracking::GrabImageRGBD(const cv::Mat &imRGB, cv::Mat &imD, const cv::Ma
         mCurrentFrame.mvStatKeys = mLastFrame.mvCorres; // 获取上一帧的对应点
         mCurrentFrame.N_s = mCurrentFrame.mvStatKeys.size();
 
-        // assign the depth value to each keypoint
+        // assign the depth value to each keypoint 赋给每一个关键点深度
         mCurrentFrame.mvStatDepth = std::vector<float>(mCurrentFrame.N_s,-1);
         for(int i=0; i<mCurrentFrame.N_s; i++)
         {
@@ -328,7 +328,8 @@ cv::Mat Tracking::GrabImageRGBD(const cv::Mat &imRGB, cv::Mat &imD, const cv::Ma
     }
     else
     {
-        mCurrentFrame.mTcw_gt = Converter::toInvMatrix(mTcw_gt)*mOriginInv; // 相对于当前相机坐标系的位姿
+        // 这个点相对于当前相机坐标系的位姿Xk_m_ik = 相机位姿的逆 * 点的世界坐标
+        mCurrentFrame.mTcw_gt = Converter::toInvMatrix(mTcw_gt)*mOriginInv;
     }
 
 
@@ -670,7 +671,7 @@ void Tracking::Track()
         if(mState!=OK)
             return;
     }
-    else
+    else //Track()中非第一帧(不必初始化)
     {
         bFrame2Frame = true;
 
@@ -700,7 +701,7 @@ void Tracking::Track()
         // cout << "initial pose: " << endl << iniTcw << endl;
         // // compute the pose with new matching
         mCurrentFrame.SetPose(iniTcw);
-        if (bJoint) //   对应论文 Joint Estimation with Optical Flow - > whether use joint optic-flow formulation
+        if (bJoint) //对应论文光流和位姿联合优化Joint Estimation with Optical Flow - > whether use joint optic-flow formulation
             Optimizer::PoseOptimizationFlow2Cam(&mCurrentFrame, &mLastFrame, TemperalMatch_subset);
         else
             Optimizer::PoseOptimizationNew(&mCurrentFrame, &mLastFrame, TemperalMatch_subset);
@@ -766,7 +767,7 @@ void Tracking::Track()
         // // ---------------------------------------------------------------------------------------
 
         cout << "Object Tracking ......" << endl;
-        std::vector<std::vector<int> > ObjIdNew = DynObjTracking();
+        std::vector<std::vector<int> > ObjIdNew = DynObjTracking(); //主要解决动态物体选取、编码问题其中sf_norm表示场景流的变化
         cout << "Object Tracking, Done!" << endl;
 
         // // ---------------------------------------------------------------------------------------
@@ -1022,7 +1023,7 @@ void Tracking::Track()
         clock_t s_4, e_4;
         double map_upd_time;
         s_4 = clock();
-        RenewFrameInfo(TemperalMatch_subset);
+        RenewFrameInfo(TemperalMatch_subset); //更新信息 补充光流追踪特征点
         e_4 = clock();
         map_upd_time = (double)(e_4-s_4)/CLOCKS_PER_SEC*1000;
         all_timing[4] = map_upd_time;
@@ -1073,7 +1074,7 @@ void Tracking::Track()
         if (f_id==StopFrame || bLocalBatch)
         {
             // (3) save static feature tracklets
-            mpMap->TrackletSta = GetStaticTrack();
+            mpMap->TrackletSta = GetStaticTrack(); //获得追踪列表
             // (4) save dynamic feature tracklets
             mpMap->TrackletDyn = GetDynamicTrackNew();  // (new added Nov 20 2019)
         }
@@ -1183,6 +1184,7 @@ void Tracking::Track()
         double loc_ba_time;
         s_5 = clock();
         // Get Partial Batch Optimization
+        // 固定尺寸的滑动窗口在局部地图中仅仅优化静态点及相机位姿因为优化动态结构并不能够带来精度上的收益
         Optimizer::PartialBatchOptimization(mpMap,mK,nWINDOW_SIZE);
         e_5 = clock();
         loc_ba_time = (double)(e_5-s_5)/CLOCKS_PER_SEC*1000;
@@ -1206,6 +1208,8 @@ void Tracking::Track()
         if (bGlobalBatch && mTestData==KITTI)
         {
             // Get Full Batch Optimization
+            // 采用因子图方法优化，并且为了提高准确性和鲁棒性，当空间点在3帧内被观测到时才会将该点记录进入全局地图
+            // 此时，静态特征与动态特征同时被纳入因子图中共同被优化
             Optimizer::FullBatchOptimization(mpMap,mK);
 
             // Metric Error AFTER Optimization
@@ -1230,7 +1234,9 @@ void Tracking::Initialization()
         std::vector<cv::Mat> mv3DPointTmp;
         for (int i = 0; i < mCurrentFrame.mvStatKeysTmp.size(); ++i)
         {
-            // mvStatKeysTmp/mvStatDepthTmp：在构造帧Frame时的   New added for background features  部分进行了获取，用稀疏点估计相机位姿
+            // mK就是内参矩阵K
+            // mvStatKeysTmp/mvStatDepthTmp：在构造帧Frame时的
+            // New added for background features  部分进行了获取，用稀疏点估计相机位姿
             mv3DPointTmp.push_back(Optimizer::Get3DinCamera(mCurrentFrame.mvStatKeysTmp[i], mCurrentFrame.mvStatDepthTmp[i], mK));
         }
         mCurrentFrame.mvStat3DPointTmp = mv3DPointTmp;
@@ -1466,7 +1472,7 @@ std::vector<std::vector<int> > Tracking::DynObjTracking()
         {
             obj_center_depth = obj_center_depth + mCurrentFrame.mvObjDepth[ObjId[i][j]];
             // const float sf_norm = cv::norm(mCurrentFrame.vFlow_3d[ObjId[i][j]]);
-            // 求出该点处光流向量的长度（只用了x,z,可能y太小了没什么用？(见下图
+            // 求出该点处光流向量的长度（只用了x,z)
             float sf_norm = std::sqrt(mCurrentFrame.vFlow_3d[ObjId[i][j]].x*mCurrentFrame.vFlow_3d[ObjId[i][j]].x + mCurrentFrame.vFlow_3d[ObjId[i][j]].z*mCurrentFrame.vFlow_3d[ObjId[i][j]].z);
             // fSFMgThres---Scene Flow Magnitude and Distribution Threshold
             if (sf_norm<fSFMgThres)
@@ -1642,6 +1648,10 @@ std::vector<std::vector<int> > Tracking::DynObjTracking()
     return ObjIdNew;
 }
 
+// 相机初始位姿估计方法 采用恒速度模型（这里理解为变换矩阵与上一帧相同和PNP求解两种方式计算变换矩阵，并采用内点较多的那一种模型)
+// 1:P3P+ransac
+// 2.运动模型估计位姿：利用上一帧的位姿和速度估计当前帧的位姿 MotionModel
+// 3.计算重投影误差选择模型
 cv::Mat Tracking::GetInitModelCam(const std::vector<int> &MatchId, std::vector<int> &MatchId_sub)
 {
     cv::Mat Mod = cv::Mat::eye(4,4,CV_32F);

@@ -57,7 +57,8 @@ cv::Mat System::TrackRGBD(const cv::Mat &im, cv::Mat &depthmap, const cv::Mat &f
         exit(-1);
     }
 
-    cv::Mat Tcw = mpTracker->GrabImageRGBD(im,depthmap,flowmap,masksem,mTcw_gt,vObjPose_gt,timestamp,imTraj,nImage);
+    cv::Mat Tcw = mpTracker->GrabImageRGBD(im,depthmap,flowmap,masksem,
+                                           mTcw_gt,vObjPose_gt,timestamp,imTraj,nImage);
 
     return Tcw;
 }
