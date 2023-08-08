@@ -177,12 +177,12 @@ Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const cv::Mat &imFlo
     // ---------------------------------------------------------------------------------------
 
     // cv::Mat img_show;
-    // cv::drawKeypoints(imGray, mvKeysSamp, img_show, cv::Scalar::all(-1), cv::DrawMatchesFlags::DEFAULT);
+    // cv::drawKeypoints(imGray, mvStatKeysTmp, img_show, cv::Scalar::all(-1), cv::DrawMatchesFlags::DEFAULT);
     // cv::imshow("KeyPoints on Background", img_show);
     // cv::waitKey(0);
 
     N_s_tmp = mvCorres.size();
-    // cout << "number of random sample points: " << mvCorres.size() << endl;
+    cout << "number of random sample points: " << mvCorres.size() << endl;
 
     // assign the depth value to each keypoint
     mvStatDepthTmp = vector<float>(N_s_tmp,-1);
@@ -207,7 +207,7 @@ Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const cv::Mat &imFlo
     // 物体上的稠密特征，用来跟踪动态物体
     // 由于物体占图像面积小，能取到的稀疏特征点很少，不足以进行跟踪和估计位姿，
     // 于是作者在物体mask内每隔3个点(也就是每4步)就取一个特征点的方式采样。只有内点才可以保存到地图并且用来对下一帧进行跟踪。
-    int step = 4; // 3
+    int step = 7; // 3
     for (int i = 0; i < imGray.rows; i=i+step)
     {
         for (int j = 0; j < imGray.cols; j=j+step)
@@ -221,10 +221,12 @@ Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const cv::Mat &imFlo
                 const float flow_x = imFlow.at<cv::Vec2f>(i,j)[0];
                 const float flow_y = imFlow.at<cv::Vec2f>(i,j)[1];
 
+                // check flow in image boundary
                 if(j+flow_x < imGray.cols && j+flow_x > 0 && i+flow_y < imGray.rows && i+flow_y > 0)
                 {
                     // save correspondences
                     mvObjFlowNext.push_back(cv::Point2f(flow_x,flow_y));
+                    // save pixel correspondences
                     mvObjCorres.push_back(cv::KeyPoint(j+flow_x,i+flow_y,0,0,0,-1));
                     // save pixel location
                     mvObjKeys.push_back(cv::KeyPoint(j,i,0,0,0,-1));

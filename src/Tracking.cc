@@ -503,10 +503,10 @@ cv::Mat Tracking::GrabImageRGBD(const cv::Mat &imRGB, cv::Mat &imD, const cv::Ma
         {
             if (mCurrentFrame.vSpeed[i].x==0)
                 continue;
-            // cout << "ID: " << mCurrentFrame.vObjBoxID[i] << endl;
+            cout << "ID: " << mCurrentFrame.vObjBoxID[i] << endl;
             cv::Point pt1(vObjPose_gt[mCurrentFrame.vObjBoxID[i]][2], vObjPose_gt[mCurrentFrame.vObjBoxID[i]][3]);
             cv::Point pt2(vObjPose_gt[mCurrentFrame.vObjBoxID[i]][4], vObjPose_gt[mCurrentFrame.vObjBoxID[i]][5]);
-            // cout << pt1.x << " " << pt1.y << " " << pt2.x << " " << pt2.y << endl;
+            cout << pt1.x << " " << pt1.y << " " << pt2.x << " " << pt2.y << endl;
             cv::rectangle(mImBGR, pt1, pt2, cv::Scalar(0, 255, 0),2);
             // string sp_gt = std::to_string(mCurrentFrame.vSpeed[i].y);
             string sp_est = std::to_string(mCurrentFrame.vSpeed[i].x/36);
@@ -692,6 +692,8 @@ void Tracking::Track()
         s_1_1 = clock();
         // Get initial estimate using P3P plus RanSac
         // 相机初始位姿估计
+        // TemperalMatch：为与上一帧特征点一对一的光流匹配"1 2 3 4 5 ..."
+        // TemperalMatch_subset：为内点序号"1 3 4 6 ....""
         cv::Mat iniTcw = GetInitModelCam(TemperalMatch,TemperalMatch_subset);
         e_1_1 = clock();
 
@@ -762,6 +764,8 @@ void Tracking::Track()
         // 当前帧的场景流=当前帧的3D点-先前帧的3D点所构成的向量
         GetSceneFlowObj();
 
+        // generate deformation vector flow
+        GetDeformFlowObj();
         // // ---------------------------------------------------------------------------------------
         // // ++++++++++++++++++++++++++++++++ Dynamic Object Tracking ++++++++++++++++++++++++++++++
         // // ---------------------------------------------------------------------------------------
@@ -795,12 +799,18 @@ void Tracking::Track()
         {
             cout << endl << "Processing Object No.[" << mCurrentFrame.nModLabel[i] << "]:" << endl;
             // Get the ground truth object motion
-            cv::Mat L_p, L_c, L_w_p, L_w_c, H_p_c, H_p_c_body;
+            // 存储上一帧和当前帧的object运动真值
+            cv::Mat L_p, // 上一帧object位姿真值（相机坐标系）
+            L_c, // 当前帧object 位姿真值（相机坐标系）
+            L_w_p, // 上一帧相机到object的位姿真值（世界坐标系）
+            L_w_c, // 当前帧相机到object的位姿真值（世界坐标系）
+            H_p_c, // 上一帧object系下的点到当前当前帧object系下的变换
+            H_p_c_body; // 上一帧object坐标系到当前帧object坐标系的位姿变化，也为当前帧object系下点到上一帧object系下的变换
             bool bCheckGT1 = false, bCheckGT2 = false;
             for (int k = 0; k < mLastFrame.nSemPosi_gt.size(); ++k)
             {
                 if (mLastFrame.nSemPosi_gt[k]==mCurrentFrame.nSemPosition[i]){
-                    cout << "it is " << mLastFrame.nSemPosi_gt[k] << "!" << endl;
+                    cout << "it is LastFrame " << mLastFrame.nSemPosi_gt[k] << "!" << endl;
                     if (mTestData==OMD)
                     {
                         L_w_p = mLastFrame.vObjPose_gt[k];
@@ -808,9 +818,9 @@ void Tracking::Track()
                     else if (mTestData==KITTI)
                     {
                         L_p = mLastFrame.vObjPose_gt[k];
-                        // cout << "what is L_p: " << endl << L_p << endl;
+                         cout << "what is L_p: " << endl << L_p << endl;
                         L_w_p = Last_Twc_gt*L_p;
-                        // cout << "what is L_w_p: " << endl << L_w_p << endl;
+                         cout << "what is L_w_p: " << endl << L_w_p << endl;
                     }
                     bCheckGT1 = true;
                     break;
@@ -819,7 +829,7 @@ void Tracking::Track()
             for (int k = 0; k < mCurrentFrame.nSemPosi_gt.size(); ++k)
             {
                 if (mCurrentFrame.nSemPosi_gt[k]==mCurrentFrame.nSemPosition[i]){
-                    cout << "it is " << mCurrentFrame.nSemPosi_gt[k] << "!" << endl;
+                    cout << "it is CurrentFrame " << mCurrentFrame.nSemPosi_gt[k] << "!" << endl;
                     if (mTestData==OMD)
                     {
                         L_w_c = mCurrentFrame.vObjPose_gt[k];
@@ -827,9 +837,9 @@ void Tracking::Track()
                     else if (mTestData==KITTI)
                     {
                         L_c = mCurrentFrame.vObjPose_gt[k];
-                        // cout << "what is L_c: " << endl << L_c << endl;
+                         cout << "what is L_c: " << endl << L_c << endl;
                         L_w_c = Curr_Twc_gt*L_c;
-                        // cout << "what is L_w_c: " << endl << L_w_c << endl;
+                         cout << "what is L_w_c: " << endl << L_w_c << endl;
                     }
                     mCurrentFrame.vObjBoxID[i] = k;
                     bCheckGT2 = true;
@@ -898,7 +908,7 @@ void Tracking::Track()
                 continue;
             }
 
-            // cout << "number of pick points: " << ObjIdTest_in.size() << "/" << ObjIdTest.size() << "/" << mCurrentFrame.mvObjKeys.size() << endl;
+             cout << "number of pick points: " << ObjIdTest_in.size() << "/" << ObjIdTest.size() << "/" << mCurrentFrame.mvObjKeys.size() << endl;
 
             // // **** show the picked points ****
             // std::vector<cv::KeyPoint> PickKeys;
@@ -936,6 +946,7 @@ void Tracking::Track()
             s_3_2 = clock();
             // // save object motion and label
             std::vector<int> InlierID;
+            bJoint = false;
             if (bJoint)
             {
                 cv::Mat Obj_X_tmp = Optimizer::PoseOptimizationFlow2(&mCurrentFrame,&mLastFrame,ObjIdTest_in,InlierID);
@@ -943,6 +954,7 @@ void Tracking::Track()
             }
             else
                 mCurrentFrame.vObjMod[i] = Optimizer::PoseOptimizationObjMot(&mCurrentFrame,&mLastFrame,ObjIdTest_in,InlierID);
+            std::cout << "mCurrentFrame.vObjMod[" << i << "]: " << std::endl << mCurrentFrame.vObjMod[i] << std::endl;
             e_3_2 = clock();
             t_con = t_con + 1;
             obj_mot_time = obj_mot_time + (double)(e_3_1-s_3_1)/CLOCKS_PER_SEC*1000 + (double)(e_3_2-s_3_2)/CLOCKS_PER_SEC*1000;
@@ -1348,6 +1360,72 @@ void Tracking::GetSceneFlowObj()
         // }
 
         mCurrentFrame.vFlow_3d[i] = flow3d;
+
+        // // get the 2D re-projection error vector
+        // // (1) transfer 3d from world to current frame.
+        // cv::Mat x3D_pc = Rcw*x3D_p+tcw;
+        // // (2) project 3d into current image plane
+        // float xc = x3D_pc.at<float>(0);
+        // float yc = x3D_pc.at<float>(1);
+        // float invzc = 1.0/x3D_pc.at<float>(2);
+        // float u = mCurrentFrame.fx*xc*invzc+mCurrentFrame.cx;
+        // float v = mCurrentFrame.fy*yc*invzc+mCurrentFrame.cy;
+
+        // mCurrentFrame.vFlow_2d[i].x = mCurrentFrame.mvObjKeys[i].pt.x - u;
+        // mCurrentFrame.vFlow_2d[i].y = mCurrentFrame.mvObjKeys[i].pt.y - v;
+
+        // // cout << "2d errors: " << mCurrentFrame.vFlow_2d[i] << endl;
+
+    }
+
+    // // // ===== show scene flow from bird eye view =====
+    // cv::Mat img_sparse_flow_3d;
+    // BirdEyeVizProperties viz_props;
+    // viz_props.birdeye_scale_factor_ = 20.0;
+    // viz_props.birdeye_left_plane_ = -15.0;
+    // viz_props.birdeye_right_plane_ = 15.0;
+    // viz_props.birdeye_far_plane_ = 30.0;
+
+    // Tracking::DrawSparseFlowBirdeye(pts_p3d, pts_vel, Converter::toInvMatrix(mLastFrame.mTcw), viz_props, img_sparse_flow_3d);
+    // cv::imshow("SparseFlowBirdeye", img_sparse_flow_3d*255);
+    // cv::waitKey(0);
+}
+
+void Tracking::GetDeformFlowObj()
+{
+    // Initialization
+    int N = mCurrentFrame.mvObjKeys.size();
+    mCurrentFrame.vDeform_3d.resize(N);
+
+    std::vector<Eigen::Vector3d> pts_p3d(N,Eigen::Vector3d(0.01,0.01,0.01));
+
+    const cv::Mat Rcw = mCurrentFrame.mTcw.rowRange(0,3).colRange(0,3);
+    const cv::Mat tcw = mCurrentFrame.mTcw.rowRange(0,3).col(3);
+
+    // Main loop
+    for (int i = 0; i < N; ++i)
+    {
+        if (mCurrentFrame.vSemObjLabel[i]<=0 || mLastFrame.vSemObjLabel[i]<=0)
+        {
+            mCurrentFrame.vObjLabel[i]=-1;
+            continue;
+        }
+
+        // get the 3d deformation flow
+        Eigen::Vector3f initDefVector(0.01,0.01,0.01);
+        // Convert Eigen::Vector3d to cv::Point3f
+        cv::Point3f x3D_p(
+                static_cast<float>(initDefVector[0]),
+                static_cast<float>(initDefVector[1]),
+                static_cast<float>(initDefVector[2])
+        );
+        cv::Point3f x3D_c(
+                static_cast<float>(initDefVector[0]),
+                static_cast<float>(initDefVector[1]),
+                static_cast<float>(initDefVector[2])
+        );
+        // cout << "3d points: " << x3D_p << " " << x3D_c << endl;
+        mCurrentFrame.vDeform_3d[i] = x3D_c;
 
         // // get the 2D re-projection error vector
         // // (1) transfer 3d from world to current frame.

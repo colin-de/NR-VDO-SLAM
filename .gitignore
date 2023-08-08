@@ -205,3 +205,4 @@ cmake-build-relwithdebinfo/
 .git_github/
 dependencies/g2o/build/
 build/
+thirdparty/

@@ -32,6 +32,23 @@ public:
     Frame(const Frame &frame);
 
     // Constructor for RGB-D cameras.
+    /**
+     * @brief 为RGBD相机准备的帧构造函数
+     *
+     * @param[in] imGray        对RGB图像灰度化之后得到的灰度图像
+     * @param[in] imDepth       深度图像
+     * @param[in] imFlow        光流图像
+     * @param[in] maskSEM       语义分割图像
+     * @param[in] timeStamp     时间戳
+     * @param[in] extractor     特征点提取器句柄
+     * @param[in] voc           ORB特征点词典的句柄
+     * @param[in] K             相机的内参数矩阵
+     * @param[in] distCoef      相机的去畸变参数
+     * @param[in] bf            baseline*bf
+     * @param[in] thDepth       远点和近点的深度区分阈值
+     * @param[in] thDepthObj    obj远点和近点的深度区分阈值
+     * @param[in] UseSampleFea  是否使用采样特征点
+     */
     Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const cv::Mat &imFlow, const cv::Mat &maskSEM, const double &timeStamp, ORBextractor* extractor,
           cv::Mat &K, cv::Mat &distCoef, const float &bf, const float &thDepth, const float &thDepthObj, const int &UseSampleFea);
 
@@ -152,6 +169,9 @@ public:
     // Store the 3D flow vector and the 2D re-projection error vector
     std::vector<cv::Point3f> vFlow_3d;
     std::vector<cv::Point2f> vFlow_2d;
+
+    // Store the 3D deformation vector
+    std::vector<cv::Point3f> vDeform_3d;
 
     // Store the motion of objects
     std::vector<cv::Mat> vObjMod;
