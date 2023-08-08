@@ -201,3 +201,7 @@ dependencies/g2o/build/Makefile
 example/vdo_slam
 track_distribution.txt
 track_distribution_static.txt
+cmake-build-relwithdebinfo/
+.git_github/
+dependencies/g2o/build/
+build/
