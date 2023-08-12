@@ -2563,6 +2563,7 @@ cv::Mat Optimizer::PoseOptimizationObjMot(Frame *pCurFrame, Frame *pLastFrame, c
 
     // ************************** preconditioning *****************************
     // (1) compute center location (in {o}) of the two point clouds of cur and pre frames.
+    // 计算当前帧和上一帧组成的object点云中心（两帧一起计算）
     cv::Mat NewCentre = (cv::Mat_<float>(3,1) << 0, 0, 0);
     for(int i=0; i<N; i++)
     {
@@ -2575,6 +2576,7 @@ cv::Mat Optimizer::PoseOptimizationObjMot(Frame *pCurFrame, Frame *pLastFrame, c
     }
 
     // (2) construct preconditioning coordinate ^{o}T_{p}
+    // 坐标系初始位置设为点云中心
     cv::Mat Twp = cv::Mat::eye(4,4,CV_32F);
     Twp.at<float>(0,3)=NewCentre.at<float>(0)/(2*N);
     Twp.at<float>(1,3)=NewCentre.at<float>(1)/(2*N);
@@ -2590,6 +2592,7 @@ cv::Mat Optimizer::PoseOptimizationObjMot(Frame *pCurFrame, Frame *pLastFrame, c
     // Set Frame vertex
     g2o::VertexSE3Expmap * vSE3 = new g2o::VertexSE3Expmap();
     // cv::Mat Init = cv::Mat::eye(4,4,CV_32F); // initial with identity matrix
+    // 用当前帧的相机位姿（用静态点计算）和当前帧的object相机位姿（用object点计算）
     cv::Mat Init = Converter::toInvMatrix(pCurFrame->mTcw)*pCurFrame->mInitModel; // initial with identity matrix
     vSE3->setEstimate(Converter::toSE3Quat(Init));
     vSE3->setId(0);
@@ -2603,6 +2606,7 @@ cv::Mat Optimizer::PoseOptimizationObjMot(Frame *pCurFrame, Frame *pLastFrame, c
     vnIndexEdgeMono.reserve(N);
 
     // Set Projection Matrix
+    // 内参矩阵KK，投影矩阵PP
     Eigen::Matrix<double, 3, 4> KK, PP;
     KK << pCurFrame->fx, 0, pCurFrame->cx, 0, 0, pCurFrame->fy, pCurFrame->cy, 0, 0, 0, 1, 0;
     PP = KK*Converter::toMatrix4d(pCurFrame->mTcw); // *Converter::toMatrix4d(Twp)
@@ -2623,10 +2627,12 @@ cv::Mat Optimizer::PoseOptimizationObjMot(Frame *pCurFrame, Frame *pLastFrame, c
             nInitialCorrespondences++;
             vIsOutlier[i] = false;
 
+            // 观测真值
             Eigen::Matrix<double,2,1> obs;
             const cv::KeyPoint &kpUn = pCurFrame->mvObjKeys[ObjId[i]];
             obs << kpUn.pt.x, kpUn.pt.y;
 
+            // 自己定义的边
             g2o::EdgeSE3ProjectXYZOnlyObjMotion* e = new g2o::EdgeSE3ProjectXYZOnlyObjMotion();
 
             e->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(0)));
@@ -2643,7 +2649,7 @@ cv::Mat Optimizer::PoseOptimizationObjMot(Frame *pCurFrame, Frame *pLastFrame, c
 
             // add projection matrix
             e->P = PP;
-
+            // 指定投影矩阵，点的世界坐标Xw
             cv::Mat Xw = pLastFrame->UnprojectStereoObject(ObjId[i],0);
             // transfer to preconditioning coordinate
             // Xw = R_wp_inv*Xw+t_wp_inv;
@@ -2683,6 +2689,7 @@ cv::Mat Optimizer::PoseOptimizationObjMot(Frame *pCurFrame, Frame *pLastFrame, c
 
         // monocular
         // cout << endl << "chi2: " << endl;
+        // 优化后遍历所有边，确定下一次参与优化的边的数量
         for(size_t i=0, iend=vpEdgesMono.size(); i<iend; i++)
         {
             g2o::EdgeSE3ProjectXYZOnlyObjMotion* e = vpEdgesMono[i];
@@ -2694,6 +2701,7 @@ cv::Mat Optimizer::PoseOptimizationObjMot(Frame *pCurFrame, Frame *pLastFrame, c
                 e->computeError();
             }
 
+            // 根据误差确定参与下一次优化的边
             const float chi2 = e->chi2();
 
             // if(chi2>chi2Mono[it])
@@ -2718,6 +2726,7 @@ cv::Mat Optimizer::PoseOptimizationObjMot(Frame *pCurFrame, Frame *pLastFrame, c
                 e->setLevel(0);
             }
 
+            // 两次迭代后取消核函数
             if(it==2)
                 e->setRobustKernel(0);
         }
@@ -2728,6 +2737,7 @@ cv::Mat Optimizer::PoseOptimizationObjMot(Frame *pCurFrame, Frame *pLastFrame, c
     }
 
     // Recover optimized pose and return number of inliers
+    // 取最终的位姿结果
     g2o::VertexSE3Expmap* vSE3_recov = static_cast<g2o::VertexSE3Expmap*>(optimizer.vertex(0));
     g2o::SE3Quat SE3quat_recov = vSE3_recov->estimate();
     cv::Mat pose = Converter::toCvMat(SE3quat_recov);
@@ -2993,6 +3003,12 @@ cv::Mat Optimizer::Get3DinWorld(const cv::KeyPoint &Feats2d, const float &Dpts, 
     return mRwc*x3D+mtwc;
 }
 
+//! 从像素平面观测恢复出相机系下的3D坐标
+//!
+//! \param Feats2d 像素坐标
+//! \param Dpts 深度
+//! \param Calib_K 相机内参
+//! \return x3D 恢复的3D坐标
 cv::Mat Optimizer::Get3DinCamera(const cv::KeyPoint &Feats2d, const float &Dpts, const cv::Mat &Calib_K)
 {
     const float invfx = 1.0f/Calib_K.at<float>(0,0);

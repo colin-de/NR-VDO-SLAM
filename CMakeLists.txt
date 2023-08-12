@@ -7,10 +7,26 @@ ENDIF()
 
 MESSAGE("Build type: " ${CMAKE_BUILD_TYPE})
 
+## FindEigen3 (for opengv / Pangolin) and FindTBB
+#set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake_modules/" ${CMAKE_MODULE_PATH})
+#
+# find eigen with our adapted "config module", that uses our eigen source tree
+set(CMAKE_PREFIX_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake_modules/eigen3" ${CMAKE_PREFIX_PATH})
+
+set(EIGEN_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/eigen")
+set(CERES_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/build-ceres-solver")
+include_directories(thirdparty/Sophus)
+include_directories(include)
+find_package(Ceres 2.0 REQUIRED CONFIG HINTS "${CERES_ROOT}" NO_DEFAULT_PATH)
+
 # ======  start c++ compile  ======
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}  -Wall  -O3 -march=native ")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall   -O3 -march=native")
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Check C++11 or C++0x support
 include(CheckCXXCompilerFlag)
@@ -39,7 +55,8 @@ if(NOT OpenCV_FOUND)
    endif()
 endif()
 
-find_package(Eigen3 3.1.0 REQUIRED)
+#find_package(Eigen3 3.1.0 REQUIRED)
+#find_package(Eigen3 3 REQUIRED)
 find_package(CSparse REQUIRED)
 
 include_directories(
@@ -75,7 +92,7 @@ ${CSPARSE_LIBRARY}
 # for mac os (default)
 #${PROJECT_SOURCE_DIR}/dependencies/g2o/lib/libg2o.dylib
 # for linux (ubuntu)
-${PROJECT_SOURCE_DIR}/dependencies/g2o/lib/libg2o.so
+${PROJECT_SOURCE_DIR}/dependencies/g2o/lib/libg2o.so Ceres::ceres
 )
 
 

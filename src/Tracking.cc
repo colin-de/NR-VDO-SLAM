@@ -34,6 +34,19 @@
 #include <map>
 #include <random>
 
+#include "camera_models.h"
+#include "common_types.h"
+#include "loss.h"
+#include <fstream>
+#include <iostream>
+#include <atomic>
+#include <opencv2/core/core.hpp>
+#include <Eigen/Dense>
+#include <Eigen/StdVector>
+#include "dataset_io.h"
+#include "vfr.h"
+#include <string>
+
 using namespace std;
 
 bool SortPairInt(const pair<int,int> &a,
@@ -485,7 +498,7 @@ cv::Mat Tracking::GrabImageRGBD(const cv::Mat &imRGB, cv::Mat &imD, const cv::Ma
                     break;
             }
         }
-        cv::imshow("Static Background and Object Points", imRGB);
+//        cv::imshow("Static Background and Object Points", imRGB);
         // cv::imwrite("feat.png",imRGB);
         if (f_id<4)
             cv::waitKey(1);
@@ -771,6 +784,7 @@ void Tracking::Track()
         // // ---------------------------------------------------------------------------------------
 
         cout << "Object Tracking ......" << endl;
+        // ObjIdNew：筛选后的Posi，ObjId[k]存储的是第k个标签对应的点在关键点中的Index,可以理解为obj label index
         std::vector<std::vector<int> > ObjIdNew = DynObjTracking(); //主要解决动态物体选取、编码问题其中sf_norm表示场景流的变化
         cout << "Object Tracking, Done!" << endl;
 
@@ -800,10 +814,10 @@ void Tracking::Track()
             cout << endl << "Processing Object No.[" << mCurrentFrame.nModLabel[i] << "]:" << endl;
             // Get the ground truth object motion
             // 存储上一帧和当前帧的object运动真值
-            cv::Mat L_p, // 上一帧object位姿真值（相机坐标系）
-            L_c, // 当前帧object 位姿真值（相机坐标系）
-            L_w_p, // 上一帧相机到object的位姿真值（世界坐标系）
-            L_w_c, // 当前帧相机到object的位姿真值（世界坐标系）
+            cv::Mat L_p, // 上一帧object->cam位姿真值（相机坐标系）
+            L_c, // 当前帧object->cam 位姿真值（相机坐标系）
+            L_w_p, // 上一帧object->world位姿真值（世界坐标系）
+            L_w_c, // 当前帧object->world的位姿真值（世界坐标系）
             H_p_c, // 上一帧object系下的点到当前当前帧object系下的变换
             H_p_c_body; // 上一帧object坐标系到当前帧object坐标系的位姿变化，也为当前帧object系下点到上一帧object系下的变换
             bool bCheckGT1 = false, bCheckGT2 = false;
@@ -859,9 +873,13 @@ void Tracking::Track()
                 continue;
             }
 
+            // 上一帧和当前帧object到相机的位姿变换
             cv::Mat L_w_p_inv = Converter::toInvMatrix(L_w_p);
             cv::Mat L_w_c_inv = Converter::toInvMatrix(L_w_c);
+
+            // 对应论文中0Hk
             H_p_c = L_w_c*L_w_p_inv;
+            // 对应论文中Lk-1Hk equation (3)
             H_p_c_body = L_w_p_inv*L_w_c; // for new metric (26 Feb 2020).
             mCurrentFrame.vObjMod_gt[i] = H_p_c_body;
             // mCurrentFrame.vObjCentre3D[i] = L_w_p.rowRange(0,3).col(3);
@@ -954,7 +972,73 @@ void Tracking::Track()
             }
             else
                 mCurrentFrame.vObjMod[i] = Optimizer::PoseOptimizationObjMot(&mCurrentFrame,&mLastFrame,ObjIdTest_in,InlierID);
-            std::cout << "mCurrentFrame.vObjMod[" << i << "]: " << std::endl << mCurrentFrame.vObjMod[i] << std::endl;
+
+            cv::Mat NewCentre = (cv::Mat_<float>(3,1) << 0, 0, 0);
+            const int N = ObjIdTest_in.size();
+            for(int i=0; i<N; i++)
+            {
+                cv::Mat Xp = mLastFrame.UnprojectStereoObject(ObjIdTest_in[i],1);
+                cv::Mat Xc = mCurrentFrame.UnprojectStereoObject(ObjIdTest_in[i],1);
+                NewCentre.at<float>(0) = NewCentre.at<float>(0) + Xp.at<float>(0) + Xc.at<float>(0);
+                NewCentre.at<float>(1) = NewCentre.at<float>(1) + Xp.at<float>(1) + Xc.at<float>(1);
+                NewCentre.at<float>(2) = NewCentre.at<float>(2) + Xp.at<float>(2) + Xc.at<float>(2);
+
+            }
+
+            // TODO: Object Pose and Camera Pose Optimization
+            Eigen::Matrix<double, 4, 4> Mat_Cam0;
+            Eigen::Matrix<double, 4, 4> Mat_Cam1;
+            Eigen::Matrix<double, 4, 4> Mat_To;
+            Eigen::Matrix<double, 4, 4> Mat_Tc;
+
+            Mat_Cam0 = Converter::toMatrix4d(mLastFrame.mTcw_gt);
+            Mat_Cam1 = Converter::toMatrix4d(mCurrentFrame.mTcw_gt);
+            Mat_To = Converter::toMatrix4d(mCurrentFrame.vObjPosePre[i]);
+            Mat_Tc = Mat_Cam1.inverse() * Mat_Cam0;
+            std::cout << "pre frame To(O->W): " << Mat_To.matrix() << std::endl;
+            std::cout << "Tc(Tc0->1): " << Mat_Tc.matrix() << std::endl;
+
+            // Initializing Cam20Exr, T_cam20->24 and T_obj24 in Sophus
+            Eigen::Matrix<double, 3, 3> Mat_Cam0_R, Mat_Cam1_R;
+            Mat_Cam0_R = Mat_Cam0.block<3, 3>(0, 0);
+            Eigen::Quaterniond q_Cam0_R(Mat_Cam0_R);
+            q_Cam0_R.normalize();
+            q_Cam0_R.toRotationMatrix();
+            Sophus::SE3d Cam0(q_Cam0_R, Mat_Cam0.block<3, 1>(0, 3));
+
+            Mat_Cam1_R = Mat_Cam1.block<3, 3>(0, 0);
+            Eigen::Quaterniond q_Cam1_R(Mat_Cam1_R);
+            q_Cam0_R.normalize();
+            q_Cam0_R.toRotationMatrix();
+            Sophus::SE3d Cam1(q_Cam0_R,  Mat_Cam1.block<3, 1>(0, 3));
+
+            // Initializing the Camera Transformation between frames
+            Eigen::Matrix<double, 3, 3> Mat_Tc_R;
+            Mat_Tc_R = Mat_Cam1.block<3, 3>(0, 0).inverse() * Mat_Cam0.block<3, 3>(0, 0);
+            Eigen::Quaterniond q_Tc_R(Mat_Tc_R);
+            q_Tc_R.normalize();
+            q_Tc_R.toRotationMatrix();
+            Sophus::SE3d T_cam(q_Tc_R, Mat_Tc.block<3, 1>(0, 3));
+
+            // Initializing the Object Rigid Transformation
+            Eigen::Matrix<double, 3, 3> Mat_To_R;
+            Mat_To_R = Mat_To.block<3, 3>(0, 0);
+            Eigen::Quaterniond q_To_R(Mat_To_R);
+            q_To_R.normalize();
+            q_To_R.toRotationMatrix();
+            Sophus::SE3d T_obj(q_To_R, Mat_To.block<3, 1>(0, 3));
+
+            ObjectPoints obj_ps;
+            StaticPoints static_ps;
+
+
+            //std::cout << "mCurrentFrame.vObjMod[" << i << "]: " << std::endl << mCurrentFrame.vObjMod[i] << std::endl;
+            //std::cout << "mCurrentFrame.mTcw: " << mCurrentFrame.mTcw << std::endl;
+            //std::cout << "mLastFrame.mTcw: " << mLastFrame.mTcw << std::endl;
+            std::cout << "mCurrentFrame.mTcw_gt: " << mCurrentFrame.mTcw_gt << std::endl;
+            std::cout << "mLastFrame.mTcw_gt: " << mLastFrame.mTcw_gt << std::endl;
+            std::cout << "mCurrentFrame.vObjPosePre: " << mCurrentFrame.vObjPosePre[0] << std::endl;
+            std::cout << "T_obj: " << T_obj.matrix() << std::endl;
             e_3_2 = clock();
             t_con = t_con + 1;
             obj_mot_time = obj_mot_time + (double)(e_3_1-s_3_1)/CLOCKS_PER_SEC*1000 + (double)(e_3_2-s_3_2)/CLOCKS_PER_SEC*1000;
@@ -998,6 +1082,8 @@ void Tracking::Track()
 
             // (3) metric
             // cv::Mat H_p_c_body_est = L_w_p_inv*mCurrentFrame.vObjMod[i]*L_w_p;
+            // 对应论文式23
+            // 比较的是object相对位姿变换计算的误差，所有用了前一帧object位姿的真值
             cv::Mat H_p_c_body_est = L_w_p_inv*mCurrentFrame.vObjMod[i]*L_w_p;
             cv::Mat RePoEr = Converter::toInvMatrix(H_p_c_body_est)*H_p_c_body;
 
